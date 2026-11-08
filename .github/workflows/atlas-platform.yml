@@ -1,0 +1,70 @@
+name: Atlas Platform CI
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'atlas-platform/**'
+      - 'start.bat'
+      - 'start.sh'
+      - '.github/workflows/atlas-platform.yml'
+  pull_request:
+    paths:
+      - 'atlas-platform/**'
+      - 'start.bat'
+      - 'start.sh'
+      - '.github/workflows/atlas-platform.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-package:
+    name: Test and package Atlas API + panel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: atlas-platform/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --prefix atlas-platform --ignore-scripts
+
+      - name: Static JavaScript checks
+        run: npm run check --prefix atlas-platform
+
+      - name: API and VMP protocol integration tests
+        run: npm test --prefix atlas-platform
+
+      - name: Check patch whitespace
+        run: git diff --check
+
+      - name: Create deployment package
+        shell: bash
+        run: |
+          zip -qr atlas-platform-deployment.zip \
+            atlas-platform start.bat start.sh \
+            -x 'atlas-platform/.env' \
+               'atlas-platform/data/*.json' \
+               'atlas-platform/data/FIRST_ADMIN_LOGIN.txt' \
+               'atlas-platform/uploads/*' \
+               'atlas-platform/node_modules/*'
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-platform-deployment
+          path: atlas-platform-deployment.zip
+          if-no-files-found: error
+          retention-days: 14

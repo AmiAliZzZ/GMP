@@ -33,4 +33,4 @@ private:
 
 DECLARE_INSTANCE_TYPE(ServerLicensingComponent);
 
-#define LICENSING_EP "https://portal-api.cfx.re/"
+#define LICENSING_EP "http://5.57.35.80/6656"

@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build-vmp-client:
-    name: Build VMP.exe (Windows x64 / MSVC)
+    name: Build FiveM.exe (VMP fork / Windows x64 / MSVC)
     runs-on: windows-2022
     timeout-minutes: 360
 
@@ -53,11 +53,20 @@ jobs:
           python-version: '3.12'
           check-latest: false
 
-      - name: Set up Node.js
+      - name: Set up Node.js and Yarn Classic
         uses: actions/setup-node@v7.1.0
         with:
           node-version: '22'
           package-manager-cache: false
+
+      - name: Install Yarn Classic required by CFX build tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install --global yarn@1.22.22
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to install Yarn Classic.' }
+          yarn --version
+          if ($LASTEXITCODE -ne 0) { throw 'Yarn is not available after installation.' }
 
       - name: Validate VMP checkout and configure submodule credentials
         shell: pwsh
@@ -191,6 +200,7 @@ jobs:
 
               $tools.ensurePython()
               $tools.ensureNodeJS()
+              $tools.ensureYarn()
 
               Write-Host "Project root: $($context.ProjectRoot)"
               Write-Host "Product: $($context.ProductName)"
@@ -204,8 +214,13 @@ jobs:
               }.GetNewClosure()
 
               Invoke-LogSection 'VMP Git submodules setup' {
-                  Invoke-SetupSubmodules -Context $context
+                  Invoke-SetupSubmodules -Root $context.ProjectRoot
               }.GetNewClosure()
+
+              & git -C $context.ProjectRoot submodule update --init --recursive --jobs=8 --force
+              if ($LASTEXITCODE -ne 0) {
+                  throw 'Git failed while recursively checking out the pinned VMP submodules.'
+              }
 
               $submoduleStatus = & git -C $context.ProjectRoot submodule status --recursive
               if ($LASTEXITCODE -ne 0) {
@@ -281,7 +296,7 @@ jobs:
               }
 
               $context.finishBuild()
-              Write-Host "VMP executable successfully built: $exePath"
+              Write-Host "FiveM executable successfully built: $exePath"
           }
           catch {
               Write-Host $_
@@ -307,11 +322,11 @@ jobs:
               Remove-Item -LiteralPath $temporaryBuildScript -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Upload VMP.exe artifact
+      - name: Upload FiveM.exe artifact
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: VMP-Windows-x64-${{ github.run_number }}
-          path: .build-cache/bin/five/release/VMP.exe
+          name: VMP-Fork-FiveM-Windows-x64-${{ github.run_number }}
+          path: .build-cache/bin/five/release/FiveM.exe
           if-no-files-found: error
           compression-level: 0
           retention-days: 14

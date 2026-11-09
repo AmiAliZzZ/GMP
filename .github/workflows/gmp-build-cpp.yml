@@ -47,11 +47,51 @@ jobs:
           submodules: false
           persist-credentials: true
 
-      - name: Set up Python
+      - name: Set up Python 3.11 for legacy node-gyp
+        id: setup-python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          # ffi-napi in native-doc-tooling is pinned to node-gyp 9.3.1.
+          # node-gyp < 10 imports distutils, which Python 3.12 removed.
+          python-version: '3.11'
           check-latest: false
+
+      - name: Validate and pin Python for legacy native addons
+        shell: pwsh
+        env:
+          PYTHON_PATH: ${{ steps.setup-python.outputs.python-path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pythonPath = $env:PYTHON_PATH
+          if ([string]::IsNullOrWhiteSpace($pythonPath) -or -not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
+            throw "actions/setup-python did not provide a valid Python executable: '$pythonPath'"
+          }
+
+          $pythonVersion = (& $pythonPath -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')").Trim()
+          if ($LASTEXITCODE -ne 0 -or $pythonVersion -ne '3.11') {
+            throw "Legacy node-gyp requires Python 3.11; setup-python provided '$pythonVersion'."
+          }
+
+          # Fail early if the exact API imported by node-gyp 9.3.1 is unavailable.
+          & $pythonPath -c "from distutils.version import StrictVersion; print('distutils.version.StrictVersion is available')"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Python 3.11 does not expose distutils.version.StrictVersion; refusing to start Prebuild.'
+          }
+
+          # Force node-gyp (including nested Yarn/npm processes) to use this interpreter.
+          $envLines = @(
+            "PYTHON=$pythonPath",
+            "NODE_GYP_FORCE_PYTHON=$pythonPath",
+            "npm_config_python=$pythonPath"
+          )
+          [System.IO.File]::AppendAllText(
+            $env:GITHUB_ENV,
+            ($envLines -join [Environment]::NewLine) + [Environment]::NewLine,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          Write-Host "Pinned legacy node-gyp Python: $pythonPath"
+          & $pythonPath --version
 
       - name: Set up Node.js and Yarn Classic
         uses: actions/setup-node@v7.1.0
@@ -169,6 +209,11 @@ jobs:
       - name: Build VMP C++ using the native build modules
         shell: pwsh
         working-directory: code/tools/ci
+        env:
+          # Apply the pin directly to the process that launches CFX Prebuild.
+          PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          NODE_GYP_FORCE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          npm_config_python: ${{ steps.setup-python.outputs.python-path }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -315,6 +360,7 @@ jobs:
           )
 
           try {
+              Write-Host "Legacy node-gyp Python: $env:NODE_GYP_FORCE_PYTHON"
               Write-Host "Executing standalone PowerShell build script: $temporaryBuildScript"
               & $temporaryBuildScript
           }

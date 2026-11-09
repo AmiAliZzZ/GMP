@@ -1,0 +1,274 @@
+name: VMP C++ Windows Build
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vmp-cpp-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-vmp-client:
+    name: Build VMP.exe (Windows x64 / MSVC)
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    env:
+      CI: 'true'
+      CI_PROJECT_DIR: ${{ github.workspace }}
+      CI_COMMIT_REF_NAME: ${{ github.ref_name }}
+      CI_COMMIT_SHA: ${{ github.sha }}
+      CI_PIPELINE_IID: ${{ github.run_number }}
+      CFX_PRODUCT_NAME: fivem
+      CFX_DRY_RUN: 'true'
+      CFX_RETAIL_BUILD: 'false'
+      CFX_FEATURE_BRANCH_BUILD: 'false'
+      VMP_GIT_USERNAME: ${{ secrets.VMP_GIT_USERNAME }}
+      VMP_GIT_TOKEN: ${{ secrets.VMP_GIT_TOKEN }}
+
+    steps:
+      - name: Checkout VMP source with complete Git history
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: true
+          submodules: false
+          persist-credentials: true
+
+      - name: Set up Python for VMP prebuild tools
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          check-latest: false
+
+      - name: Set up Node.js for native documentation generation
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Validate VMP repository layout and prepare Git access
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = [System.IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\')
+
+          $requiredFiles = @(
+            '.gitmodules',
+            'prebuild.cmd',
+            'prebuild_natives.cmd',
+            'code\tools\ci\build_client.ps1',
+            'code\tools\ci\vswhere.exe',
+            'code\premake5.lua',
+            'vendor\cef\cef_build_name.txt'
+          )
+
+          $missing = @()
+          foreach ($relativePath in $requiredFiles) {
+            if (-not (Test-Path -LiteralPath (Join-Path $root $relativePath))) {
+              $missing += $relativePath
+            }
+          }
+
+          if ($missing.Count -gt 0) {
+            $nestedBuild = Join-Path $root 'vmp-master\code\tools\ci\build_client.ps1'
+            if (Test-Path -LiteralPath $nestedBuild) {
+              throw 'VMP source is nested inside vmp-master. The VMP Git repository (including .gitmodules and submodule gitlinks) must be the repository root. Do not upload a ZIP folder inside another Git repository; push/clone the real VMP repository root.'
+            }
+            throw "This checkout is not a complete VMP source root. Missing required files: $($missing -join ', '). Check out the real VMP repository, not the Atlas Node.js-only package or a patch ZIP."
+          }
+
+          $gitRoot = (& git -C $root rev-parse --show-toplevel).Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Git metadata is unavailable. Checkout the repository with Git; do not build from a source ZIP.'
+          }
+          $gitRoot = [System.IO.Path]::GetFullPath($gitRoot).TrimEnd('\')
+          if (-not [string]::Equals($gitRoot, $root, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The VMP source must be the Git repository root because its submodules are pinned by the root .gitmodules and Git tree.'
+          }
+
+          $submodulePaths = & git -C $root config -f .gitmodules --get-regexp '^submodule\..*\.path$'
+          if ($LASTEXITCODE -ne 0 -or -not $submodulePaths) {
+            throw 'No valid submodule paths were found in the root .gitmodules file.'
+          }
+
+          $hasUsername = -not [string]::IsNullOrWhiteSpace($env:VMP_GIT_USERNAME)
+          $hasToken = -not [string]::IsNullOrWhiteSpace($env:VMP_GIT_TOKEN)
+          if ($hasUsername -ne $hasToken) {
+            throw 'Configure both repository secrets VMP_GIT_USERNAME and VMP_GIT_TOKEN, or leave both empty when git.vmp.ir submodules are publicly readable.'
+          }
+
+          if ($hasUsername -and $hasToken) {
+            $credential = '{0}:{1}' -f $env:VMP_GIT_USERNAME, $env:VMP_GIT_TOKEN
+            $encodedCredential = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($credential))
+            & git config --global 'http.https://git.vmp.ir/.extraheader' "AUTHORIZATION: basic $encodedCredential"
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Could not configure authenticated access for git.vmp.ir.'
+            }
+          }
+
+          & git config --global http.version HTTP/1.1
+          & git config --global http.lowSpeedLimit 1000
+          & git config --global http.lowSpeedTime 60
+
+          $vswhere = Join-Path $root 'code\tools\ci\vswhere.exe'
+          $vsPath = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
+          if ([string]::IsNullOrWhiteSpace($vsPath)) {
+            throw 'Visual Studio 2022 C++ x64 tools were not found on the Windows runner.'
+          }
+          if (-not (Test-Path (Join-Path $vsPath 'VC\Auxiliary\Build\vcvars64.bat'))) {
+            throw 'Visual Studio is present, but vcvars64.bat is missing.'
+          }
+
+          if (-not (Test-Path 'C:\msys64\usr\bin\pacman.exe')) {
+            throw 'MSYS2 is missing. The VMP prebuild requires C:\msys64\usr\bin\pacman.exe.'
+          }
+          foreach ($command in @('git', 'python', 'py', 'node', 'npm')) {
+            if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+              throw "Required build command '$command' is not available in PATH."
+            }
+          }
+
+          Write-Host "VMP source root: $root"
+          Write-Host "Visual Studio: $vsPath"
+          Write-Host "Submodule entries: $($submodulePaths.Count)"
+          Write-Host 'Repository preflight completed.'
+
+      - name: Build VMP C++ executable with the repository build modules
+        shell: pwsh
+        working-directory: code/tools/ci
+        run: |
+          using module .\psm1\cfxBuildContext.psm1
+          using module .\psm1\cfxBuildTools.psm1
+          using module .\psm1\cfxGitlabSections.psm1
+          using module .\psm1\cfxRunMSBuild.psm1
+          using module .\psm1\cfxRunPrebuild.psm1
+          using module .\psm1\cfxRunPremake.psm1
+          using module .\psm1\cfxSetupCEF.psm1
+          using module .\psm1\cfxSetupSubmodules.psm1
+          using module .\psm1\cfxSetupVS.psm1
+          using module .\psm1\cfxUpdateVersionFiles.psm1
+          using module .\psm1\cfxVersions.psm1
+
+          $ErrorActionPreference = 'Stop'
+          Set-Location $env:CI_PROJECT_DIR
+
+          $context = Get-CfxBuildContext -RequireProductName
+          $tools = Get-CfxBuildTools -Context $context
+          $versions = Get-CfxVersions -Context $context
+
+          $tools.ensurePython()
+          $tools.ensureNodeJS()
+
+          $context.startBuild()
+
+          Invoke-LogSection 'Visual Studio Environment Setup' {
+            Invoke-CfxSetupVS -Context $context -Tools $tools
+          }.GetNewClosure()
+
+          Invoke-LogSection 'VMP Git submodules setup' {
+            Invoke-SetupSubmodules -Context $context
+          }.GetNewClosure()
+
+          $submoduleStatus = & git -C $context.ProjectRoot submodule status --recursive
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Git could not verify the VMP submodule checkout.'
+          }
+          $badSubmodules = @($submoduleStatus | Where-Object { $_ -match '^[\-+U]' })
+          if ($badSubmodules.Count -gt 0) {
+            throw "One or more VMP submodules are missing or not at their pinned commit:`n$($badSubmodules -join "`n")"
+          }
+
+          Invoke-LogSection 'CEF dependency setup' {
+            Invoke-CfxSetupCEF -Context $context -Tools $tools
+          }.GetNewClosure()
+
+          Invoke-LogSection 'VMP prebuild' {
+            Invoke-RunPrebuild -Context $context
+          }.GetNewClosure()
+
+          Invoke-LogSection 'Premake project generation' {
+            Invoke-RunPremake -Context $context -Tools $tools
+          }.GetNewClosure()
+
+          Invoke-LogSection 'Version resource generation' {
+            Invoke-UpdateVersionFiles -Context $context -Versions $versions
+          }.GetNewClosure()
+
+          Invoke-LogSection 'MSBuild Release x64' {
+            Invoke-RunMSBuild -Context $context -Tools $tools
+          }.GetNewClosure()
+
+          $exePath = Join-Path $context.MSBuildOutput $context.ProductExeName
+          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+            throw "MSBuild completed without producing the expected executable: $exePath"
+          }
+
+          $context.finishBuild()
+          Write-Host "VMP executable created: $exePath"
+
+      - name: Verify VMP.exe is a valid Windows x64 executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exePath = Join-Path $env:GITHUB_WORKSPACE '.build-cache\bin\five\release\VMP.exe'
+          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+            throw "VMP.exe was not found at the expected build output path: $exePath"
+          }
+
+          $fileInfo = Get-Item -LiteralPath $exePath
+          if ($fileInfo.Length -le 0) {
+            throw 'VMP.exe exists but is empty.'
+          }
+
+          $stream = [System.IO.File]::OpenRead($exePath)
+          try {
+            $dosHeader = [byte[]]::new(64)
+            if ($stream.Read($dosHeader, 0, $dosHeader.Length) -ne $dosHeader.Length) {
+              throw 'VMP.exe has an incomplete DOS header.'
+            }
+            if ([Text.Encoding]::ASCII.GetString($dosHeader, 0, 2) -ne 'MZ') {
+              throw 'VMP.exe does not have a valid Windows MZ header.'
+            }
+
+            $peOffset = [BitConverter]::ToInt32($dosHeader, 0x3C)
+            if ($peOffset -lt 64 -or $peOffset -gt ($stream.Length - 6)) {
+              throw 'VMP.exe has an invalid PE header offset.'
+            }
+
+            $stream.Position = $peOffset
+            $peHeader = [byte[]]::new(6)
+            if ($stream.Read($peHeader, 0, $peHeader.Length) -ne $peHeader.Length) {
+              throw 'VMP.exe has an incomplete PE header.'
+            }
+            if ([Text.Encoding]::ASCII.GetString($peHeader, 0, 4) -ne "PE`0`0") {
+              throw 'VMP.exe does not have a valid PE signature.'
+            }
+
+            $machine = [BitConverter]::ToUInt16($peHeader, 4)
+            if ($machine -ne 0x8664) {
+              throw ('VMP.exe is not x64. PE machine type: 0x{0:X4}' -f $machine)
+            }
+          }
+          finally {
+            $stream.Dispose()
+          }
+
+          $sizeMiB = [Math]::Round($fileInfo.Length / 1MB, 2)
+          "## VMP C++ build succeeded`n`n- Executable: `VMP.exe`\n- Architecture: `Windows x64`\n- Size: `$sizeMiB MiB\n- Commit: `$env:GITHUB_SHA" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          Write-Host "Verified VMP.exe ($sizeMiB MiB, x64)."
+
+      - name: Upload VMP.exe build artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: VMP-Windows-x64-${{ github.run_number }}
+          path: .build-cache/bin/five/release/VMP.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

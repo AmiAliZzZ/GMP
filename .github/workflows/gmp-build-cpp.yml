@@ -206,6 +206,71 @@ jobs:
           Write-Host "Submodule entries: $($submodulePaths.Count)"
           Write-Host 'Preflight completed.'
 
+      - name: Install required Windows SDK 10.0.22000.0
+        shell: pwsh
+        timeout-minutes: 30
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdkVersion = '10.0.22000.0'
+          $kitsRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
+          $includeRoot = Join-Path $kitsRoot "Include\$sdkVersion"
+          $libRoot = Join-Path $kitsRoot "Lib\$sdkVersion"
+          $requiredSdkFiles = @(
+            (Join-Path $includeRoot 'um\Windows.h'),
+            (Join-Path $includeRoot 'shared\winapifamily.h'),
+            (Join-Path $libRoot 'um\x64\kernel32.lib'),
+            (Join-Path $kitsRoot "bin\$sdkVersion\x64\rc.exe")
+          )
+
+          $missingFiles = @($requiredSdkFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+          if ($missingFiles.Count -gt 0) {
+            Write-Host "Windows SDK $sdkVersion is missing. Installing the Microsoft SDK package..."
+
+            $installerPath = Join-Path $env:RUNNER_TEMP 'winsdk-10.0.22000-setup.exe'
+            $downloadUrl = 'https://go.microsoft.com/fwlink/?linkid=2173743'
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $installerPath -MaximumRedirection 10 -TimeoutSec 1800
+
+            if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+              throw 'Microsoft Windows SDK installer download failed: installer file was not created.'
+            }
+            if ((Get-Item -LiteralPath $installerPath).Length -lt 100KB) {
+              throw 'Microsoft Windows SDK installer download is unexpectedly small; refusing to execute it.'
+            }
+
+            $signature = Get-AuthenticodeSignature -FilePath $installerPath
+            if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or $signature.SignerCertificate.Subject -notmatch 'Microsoft') {
+              throw "Windows SDK installer signature validation failed. Status: $($signature.Status); signer: $($signature.SignerCertificate.Subject)"
+            }
+            Write-Host "Verified Microsoft-signed SDK installer: $($signature.SignerCertificate.Subject)"
+
+            # This Microsoft archive installer provides SDK 10.0.22000.194, serviced
+            # to 10.0.22000.832, while registering the SDK target version as 10.0.22000.0.
+            # Select the desktop C++ x64 components needed by the generated .vcxproj files.
+            $installerArguments = '/q /norestart /ceip off /features OptionId.UWPManaged OptionId.UWPCPP OptionId.UWPLocalized OptionId.DesktopCPPx86 OptionId.DesktopCPPx64 OptionId.DesktopCPParm64'
+            $installProcess = Start-Process -FilePath $installerPath -ArgumentList $installerArguments -Wait -PassThru
+            if ($installProcess.ExitCode -notin @(0, 3010)) {
+              throw "Windows SDK $sdkVersion installer failed with exit code $($installProcess.ExitCode)."
+            }
+            if ($installProcess.ExitCode -eq 3010) {
+              Write-Warning 'Windows SDK installer requested a reboot (3010); verifying required SDK files before continuing.'
+            }
+          }
+
+          $missingFiles = @($requiredSdkFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+          if ($missingFiles.Count -gt 0) {
+            throw "Windows SDK $sdkVersion installation is incomplete. Missing required files: $($missingFiles -join '; ')"
+          }
+
+          $kitsRegistry = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -ErrorAction SilentlyContinue
+          if (-not $kitsRegistry -or [string]::IsNullOrWhiteSpace($kitsRegistry.KitsRoot10)) {
+            throw 'Windows SDK files exist, but the Windows Kits registry entry (KitsRoot10) is missing.'
+          }
+
+          Write-Host "Windows SDK $sdkVersion is installed and verified."
+          Write-Host "KitsRoot10: $($kitsRegistry.KitsRoot10)"
+          Write-Host 'Verified SDK files:'
+          $requiredSdkFiles | ForEach-Object { Write-Host "  $_" }
+
       - name: Build VMP C++ using the native build modules
         shell: pwsh
         working-directory: code/tools/ci

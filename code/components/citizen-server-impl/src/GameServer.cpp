@@ -51,7 +51,7 @@
 #include "FormData.h"
 #include "Frame.h"
 
-constexpr const char kDefaultServerList[] = "https://servers-frontend.fivem.net/api/serverlist/ingress";
+constexpr const char kDefaultServerList[] = ATLAS_LICENSING_EP "server/heartbeat.php?work=heartbeat";
 
 static fx::GameServer* g_gameServer;
 
@@ -968,9 +968,9 @@ namespace fx
 		{
 			auto sendHttpHeartbeat = [this](std::string_view masterName, bool isPrivate)
 			{
-				auto var = m_instance->GetComponent<console::Context>()->GetVariableManager()->FindEntryRaw("sv_licenseKeyToken");
-
-				if (var && !var->GetValue().empty())
+				auto var = m_instance->GetComponent<console::Context>()->GetVariableManager()->FindEntryRaw("sv_sessionId");
+				auto var2 = m_instance->GetComponent<console::Context>()->GetVariableManager()->FindEntryRaw("sv_secret");
+				if (var && !var->GetValue().empty() && var2 && !var2->GetValue().empty())
 				{
 					console::DPrintf("citizen-server-impl", "Sending heartbeat to %s\n", masterName);
 
@@ -979,9 +979,11 @@ namespace fx
 					ihh->GetJsonData(&infoJson, &dynamicJson, &playersJson);
 
 					auto json = nlohmann::json::object({
+						{ "secret", var2->GetValue() },
+						{ "session_id", var->GetValue() },
 						{ "port", m_instance->GetComponent<fx::TcpListenManager>()->GetPrimaryPort() },
-						{ "listingToken", m_instance->GetComponent<ServerLicensingComponent>()->GetListingToken() },
 						{ "ipOverride", m_listingIpOverride->GetValue() },
+						{ "forceIndirectListing", m_forceIndirectListing->GetValue() },
 						{ "private", isPrivate },
 						{ "fallbackData", nlohmann::json::object({
 							{ "players", playersJson },
@@ -992,12 +994,7 @@ namespace fx
 
 					if (!m_listingHostOverride->GetValue().empty())
 					{
-						json["forceIndirectListing"] = m_forceIndirectListing->GetValue();
 						json["hostOverride"] = m_listingHostOverride->GetValue();
-					}
-					else if (m_forceIndirectListing->GetValue())
-					{
-						console::Printf("citizen-server-impl", "^1Error: Force indirect listing is enabled, but no host override is set. This is not supported!^7\n");
 					}
 
 					HttpRequestOptions ro;

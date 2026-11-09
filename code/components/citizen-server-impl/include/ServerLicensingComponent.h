@@ -33,4 +33,11 @@ private:
 
 DECLARE_INSTANCE_TYPE(ServerLicensingComponent);
 
-#define LICENSING_EP "http://5.57.35.80/6656"
+// Atlas license registration and server-listing API origin. Keep the trailing slash.
+// Use HTTPS for production deployments.
+#ifndef ATLAS_LICENSING_EP
+#define ATLAS_LICENSING_EP "http://5.57.35.80:6656/"
+#endif
+
+// Legacy VMP/Cfx commerce origin; intentionally not used for Atlas license/heartbeat calls.
+#define LICENSING_EP "https://api.vmp.ir/"

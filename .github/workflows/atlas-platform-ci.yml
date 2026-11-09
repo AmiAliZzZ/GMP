@@ -1,0 +1,46 @@
+name: Atlas Platform CI
+
+on:
+  push:
+    paths:
+      - 'atlas-platform/**'
+      - 'start.bat'
+      - 'start.sh'
+      - '.github/workflows/atlas-platform-ci.yml'
+  pull_request:
+    paths:
+      - 'atlas-platform/**'
+      - 'start.bat'
+      - 'start.sh'
+      - '.github/workflows/atlas-platform-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node.js ${{ matrix.node-version }} checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: atlas-platform/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+        working-directory: atlas-platform
+      - name: Check JavaScript syntax
+        run: npm run check
+        working-directory: atlas-platform
+      - name: Run API and integration tests
+        run: npm test
+        working-directory: atlas-platform

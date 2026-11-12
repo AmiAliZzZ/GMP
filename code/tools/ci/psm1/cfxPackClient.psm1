@@ -51,6 +51,41 @@ function Invoke-PackClient {
         Copy-Item -Force -Recurse $projectRoot\data\client_rdr\*             $packRoot\
     }
 
+    # GMP FIX (FiveM crash "msvcp140.dll+12A47" right after update):
+    # data\redist\crt in the repo holds an OLD copy of msvcp140/vcruntime140. The binaries are compiled with the
+    # (newer) MSVC toolset of the CI runner, and the app loads the CRT from FiveM.app\bin first, so an older
+    # msvcp140.dll than the compiler's STL crashes at startup. Always bundle the CRT that ships with the toolset
+    # that built this client (Visual Studio\VC\Redist\MSVC\<newest>\x64\Microsoft.VC14x.CRT).
+    $vswhere = [IO.Path]::Combine($projectRoot, "code\tools\ci\vswhere.exe")
+    $vsPath = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($vsPath)) {
+        throw "GMP: Visual Studio not found, cannot bundle the matching MSVC runtime"
+    }
+
+    $redistRoot = Join-Path $vsPath "VC\Redist\MSVC"
+    $crtDir = Get-ChildItem -LiteralPath $redistRoot -Directory |
+        Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } |
+        Sort-Object { [version]$_.Name } -Descending |
+        ForEach-Object { Get-ChildItem -LiteralPath (Join-Path $_.FullName "x64") -Directory -Filter "Microsoft.VC*.CRT" -ErrorAction SilentlyContinue } |
+        Select-Object -First 1
+
+    if (-not $crtDir -or -not (Test-Path -LiteralPath (Join-Path $crtDir.FullName "msvcp140.dll"))) {
+        throw "GMP: MSVC x64 CRT redistributable not found under $redistRoot"
+    }
+
+    $oldVer = $null
+    if (Test-Path -LiteralPath "$packRoot\bin\msvcp140.dll") {
+        $oldVer = (Get-Item "$packRoot\bin\msvcp140.dll").VersionInfo.FileVersion
+    }
+
+    Copy-Item -Force (Join-Path $crtDir.FullName "*.dll") "$packRoot\bin\"
+
+    $newVer = (Get-Item "$packRoot\bin\msvcp140.dll").VersionInfo.FileVersion
+    Write-Host "GMP CRT: bundled msvcp140.dll $oldVer (repo data\redist\crt) -> $newVer ($($crtDir.FullName))"
+    if ($oldVer -and ([version]($oldVer -replace '[^\d\.].*$','')) -gt ([version]($newVer -replace '[^\d\.].*$',''))) {
+        throw "GMP: bundled msvcp140.dll ($oldVer) is newer than the toolset CRT ($newVer) - refusing to downgrade"
+    }
+
     # Adding build output
     Copy-Item -Force $binRoot\*.dll                      $packRoot\
     Copy-Item -Force $binRoot\*.com                      $packRoot\

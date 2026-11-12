@@ -95,8 +95,10 @@ function Invoke-PackClient {
     Copy-Item -Force $bootstrapperPath $packRoot\CitizenFX.exe
     Copy-Item -Force $bootstrapperPath $cachesRoot\CitizenFX.exe
 
-    # From closed
-    Copy-Item -Force $binRoot\RGL-ElevationHelper.exe $packRoot\
+    # GMP: the closed Rockstar RGL elevation helper is no longer required/shipped
+    if (Test-Path "$binRoot\RGL-ElevationHelper.exe") {
+        Copy-Item -Force $binRoot\RGL-ElevationHelper.exe $packRoot\
+    }
 
     # upload review jobs will use this compressed bootstrap file
     Remove-Item -Force -ErrorAction ignore $bootstrapperCompressedPath

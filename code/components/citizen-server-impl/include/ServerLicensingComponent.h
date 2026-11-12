@@ -33,11 +33,12 @@ private:
 
 DECLARE_INSTANCE_TYPE(ServerLicensingComponent);
 
-// Atlas license registration and server-listing API origin. Keep the trailing slash.
+// GMP license registration and server-listing API origin. Keep the trailing slash.
 // Use HTTPS for production deployments.
-#ifndef ATLAS_LICENSING_EP
-#define ATLAS_LICENSING_EP "http://5.57.35.80:6656/"
+#ifndef GMP_LICENSING_EP
+#define GMP_LICENSING_EP "http://5.57.35.80:9891/"
 #endif
 
-// Legacy VMP/Cfx commerce origin; intentionally not used for Atlas license/heartbeat calls.
-#define LICENSING_EP "https://api.vmp.ir/"
+// Kept for source compatibility with older code that referenced ATLAS_LICENSING_EP.
+#define ATLAS_LICENSING_EP GMP_LICENSING_EP
+#define LICENSING_EP GMP_LICENSING_EP

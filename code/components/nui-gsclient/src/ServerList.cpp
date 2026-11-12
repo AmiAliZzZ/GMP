@@ -25,6 +25,10 @@
 #include <fnv.h>
 
 #include <HttpClient.h>
+
+#ifndef GMP_JOIN_BASE
+#define GMP_JOIN_BASE "http://5.57.35.80:9891/"
+#endif
 #include <windns.h>
 
 #include <tbb/concurrent_unordered_set.h>
@@ -688,10 +692,14 @@ void GSClient_QueryOneServer(const std::wstring& arg)
 
 	if (narrowArg.find("cfx.re/join") != std::string::npos)
 	{
+		// GMP: resolve join codes through the GMP core server
+		auto gmpJoinBase = narrowArg.substr(0, narrowArg.find_last_of(':'));
+		auto gmpJoinCode = gmpJoinBase.substr(gmpJoinBase.find_last_of('/') + 1);
+
 		HttpRequestOptions ro;
 		ro.responseHeaders = std::make_shared<HttpHeaderList>();
 
-		Instance<HttpClient>::Get()->DoGetRequest(fmt::sprintf("https://%s", narrowArg.substr(0, narrowArg.find_last_of(':'))), ro, [ro, processQuery](bool success, const char* data, size_t callback)
+		Instance<HttpClient>::Get()->DoGetRequest(fmt::sprintf("%sjoin/%s", GMP_JOIN_BASE, gmpJoinCode), ro, [ro, processQuery](bool success, const char* data, size_t callback)
 		{
 			if (success)
 			{

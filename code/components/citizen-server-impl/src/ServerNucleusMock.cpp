@@ -97,7 +97,7 @@ static InitFunction initFunction([]()
 			HttpRequestOptions opts;
 			opts.ipv4 = true;
 
-			httpClient->DoPostRequest("https://cfx.re/api/register/?v=2", reqJson.dump(), opts, [instance](bool success, const char* data, size_t length)
+			httpClient->DoPostRequest(GMP_LICENSING_EP "api/register/?v=2", reqJson.dump(), opts, [instance](bool success, const char* data, size_t length)
 			{
 				auto backoff = [&]()
 				{
@@ -132,7 +132,7 @@ static InitFunction initFunction([]()
 					return;
 				}
 
-				auto url = fmt::sprintf("https://%s/", host);
+				auto url = fmt::sprintf("http://%s/", host);
 
 				instance->GetComponent<fx::ResourceManager>()
 					->GetComponent<fx::ResourceEventManagerComponent>()

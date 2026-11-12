@@ -44,17 +44,17 @@ static InitFunction httpinitFunction([]()
 					{ "Content-Type", "application/json; charset=utf-8" }
 				};
 				opts.addErrorBody = true;
-				httpClient->DoPostRequest(fmt::sprintf(ATLAS_LICENSING_EP "server/register.php?work=register"), jsonData.dump(), opts, [instance](bool success, const char* data, size_t length)
+				httpClient->DoPostRequest(fmt::sprintf(GMP_LICENSING_EP "server/register.php?work=register"), jsonData.dump(), opts, [instance](bool success, const char* data, size_t length)
 				{
 					if (!success)
 					{
-						FatalError("A connection with the Atlas licensing service could not be established!");
+						FatalError("A connection with the GMP licensing service could not be established!");
 						return;
 					}
 
 					if (!data || length == 0)
 					{
-						FatalError("Atlas licensing service returned an empty response.");
+						FatalError("GMP licensing service returned an empty response.");
 						return;
 					}
 
@@ -63,7 +63,7 @@ static InitFunction httpinitFunction([]()
 						auto jsonData = nlohmann::json::parse(std::string(data, length));
 						if (jsonData.value("status", 0) == 1)
 						{
-							console::Printf("Server Auth", "Atlas server license authentication succeeded!\n");
+							console::Printf("Server Auth", "GMP server license authentication succeeded!\n");
 							auto consoleCtx = instance->GetComponent<console::Context>();
 							{
 								se::ScopedPrincipal principalScope(se::Principal{ "system.console" });
@@ -72,18 +72,18 @@ static InitFunction httpinitFunction([]()
 							}
 							auto gameServer = instance->GetComponent<fx::GameServer>();
 							gameServer->ForceHeartbeat();
-							console::Printf("Server Auth", "Atlas Session Id : %s\n", jsonData.value("session_id", "0"));
+							console::Printf("Server Auth", "GMP Session Id : %s\n", jsonData.value("session_id", "0"));
 							licenseChecked = true;
 						}
 						else
 						{
-							const auto errorMessage = jsonData.value("message", std::string("Atlas license authentication failed"));
+							const auto errorMessage = jsonData.value("message", std::string("GMP license authentication failed"));
 							FatalError("%s", errorMessage.c_str());
 						}
 					}
 					catch (const std::exception& e)
 					{
-						FatalError("Atlas licensing service returned an invalid response: %s", e.what());
+						FatalError("GMP licensing service returned an invalid response: %s", e.what());
 					}
 				});
 			}

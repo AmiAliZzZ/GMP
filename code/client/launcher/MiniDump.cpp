@@ -242,10 +242,7 @@ static void OnStartSession()
 
 	auto crashometry = load_crashometry();
 	std::string userId = "0";
-	if (crashometry.find("RockstarId") != crashometry.end())
-	{
-		userId = crashometry["RockstarId"];
-	}
+	// GMP: Rockstar ID is no longer read/reported
 
 	FILE* f = _wfopen(MakeRelativeCitPath(L"citizen/release.txt").c_str(), L"r");
 	std::string version;
@@ -1186,11 +1183,8 @@ void InitializeDumpServer(int inheritedHandle, int parentPid)
 				auto crashometry = load_crashometry();
 
 				std::string userId = "0";
-				if (crashometry.find("RockstarId") != crashometry.end())
-				{
-					userId = crashometry["RockstarId"];
-					crashometry.erase("RockstarId");
-				}
+				// GMP: Rockstar ID is no longer read/reported
+				crashometry.erase("RockstarId");
 
 				parameters[L"BuildID"] = L"20170101";
 				parameters[L"UserID"] = ToWide(userId);
@@ -1693,7 +1687,7 @@ void InitializeDumpServer(int inheritedHandle, int parentPid)
 				parameters[L"Fatal"] = (shouldTerminate) ? L"true" : L"false";
 
 				// upload the actual minidump file as well
-#define CFX_CRASH_INGRESS_URL "https://crash-ingress.fivem.net"
+// GMP: crash dumps are never uploaded to Cfx.re (CFX_CRASH_INGRESS_URL intentionally left undefined)
 #if defined(CFX_CRASH_INGRESS_URL) && (defined(GTA_FIVE) || defined(IS_RDR3))
 				if (uploadCrashes && shouldUpload && HTTPUpload::SendMultipartPostRequest(va(L"%s/post", ToWide(CFX_CRASH_INGRESS_URL)), parameters, files, &timeout, &responseBody, &responseCode))
 				{

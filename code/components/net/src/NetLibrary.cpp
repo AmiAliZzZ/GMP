@@ -38,8 +38,12 @@
 #include "NetBitVersion.h"
 #include "NetEvent.h"
 
+#ifndef GMP_JOIN_BASE
+#define GMP_JOIN_BASE "http://5.57.35.80:9891/"
+#endif
+
 #ifndef POLICY_LIVE_ENDPOINT
-#define POLICY_LIVE_ENDPOINT "https://policy-live.fivem.net/"
+#define POLICY_LIVE_ENDPOINT "http://5.57.35.80:9891/policy/"
 #endif
 
 #ifdef GTA_FIVE
@@ -781,7 +785,10 @@ static concurrency::task<std::optional<std::string>> ResolveUrl(const std::strin
 			joinRootUrl = "cfx.re/join/" + rootUrl;
 		}
 
-		Instance<HttpClient>::Get()->DoGetRequest(fmt::sprintf("https://%s", joinRootUrl), ro, [ro, tce](bool success, const char* data, size_t callback)
+		// GMP: join codes are resolved by the GMP core server (<base>/join/<code>)
+		auto joinCode = joinRootUrl.substr(joinRootUrl.find_last_of('/') + 1);
+
+		Instance<HttpClient>::Get()->DoGetRequest(fmt::sprintf("%sjoin/%s", GMP_JOIN_BASE, joinCode), ro, [ro, tce](bool success, const char* data, size_t callback)
 		{
 			if (success)
 			{
